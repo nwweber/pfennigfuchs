@@ -6,13 +6,14 @@ import itertools
 import logging
 from decimal import Decimal
 import json
+import argparse
 
 # see here https://stackoverflow.com/a/38537983
 logging.basicConfig()
 logging.getLogger().setLevel(logging.DEBUG)
 info = logging.info
 
-RECORDS_FILENAME: str = "records.json"
+RECORDS_FILENAME: str = "records_example.json"
 
 
 def resolve_transfers(balances: dict):
@@ -97,15 +98,20 @@ def calculate_balances(records):
     return balances
 
 
-def load_records():
-    with open(RECORDS_FILENAME, "r") as f:
+def load_records(records_file: str) -> dict:
+    with open(records_file, "r") as f:
         records = json.load(f)
     return records
 
 
-def main() -> None:
-    info(f'loading records from {RECORDS_FILENAME}')
-    records = load_records()
+def main(records_file: str) -> None:
+    """
+    run for file `records_file`
+    :param records_file:
+    :return:
+    """
+    info(f'loading records from {records_file}')
+    records = load_records(records_file)
     balances = calculate_balances(records)
 
     print("final balances:")
@@ -116,11 +122,16 @@ def main() -> None:
 
     print("transactions:")
     for transaction in transactions:
-        print(transaction)
+        print(f'{transaction["sender"]}\ttransfers\t{transaction["amount"]}\tto\t{transaction["receiver"]}')
 
     for person, transaction_amount in balance_errors:
-        print(f"missed balance: {person}: {transaction_amount}")
+        print('missed balance:')
+        print(f"{person}: {transaction_amount}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('records_file', type=str, help="path to json file listing who paid for what")
+    args = parser.parse_args()
+
+    main(args.records_file)
