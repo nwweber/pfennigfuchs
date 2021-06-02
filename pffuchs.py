@@ -5,8 +5,8 @@ Figure out who owns how much to whom, and generate minimal amount of transfers b
 import itertools
 import logging
 from decimal import Decimal
-import json
 import argparse
+import csv
 
 # see here https://stackoverflow.com/a/38537983
 logging.basicConfig()
@@ -82,15 +82,17 @@ def calculate_balances(records):
     """
     balances = dict()
     for rec in records:
-        rec["amount"] = Decimal(rec["amount"])
-        all_people: list = [rec["sponsor"]] + rec["debtors"]
+        sponsor = rec["sponsor"]
+        debtors = rec["debtors"]
+        amount = rec["amount"]
+        all_people: list = [sponsor] + debtors
 
         # sponsor gets credited with amount paid
-        prev_balance_spons = balances.get(rec["sponsor"], Decimal("0.00"))
-        balances[rec["sponsor"]] = prev_balance_spons + rec["amount"]
+        prev_balance_spons = balances.get(sponsor, Decimal("0.00"))
+        balances[sponsor] = prev_balance_spons + amount
 
         # everyone involved in the transaction gets charged with amount owed
-        owed = rec["amount"] / len(all_people)
+        owed = amount / len(all_people)
         for person in all_people:
             prev_balance = balances.get(person, Decimal("0.00"))
             # rounding to full cents
@@ -98,9 +100,21 @@ def calculate_balances(records):
     return balances
 
 
-def load_records(records_file: str) -> dict:
-    with open(records_file, "r") as f:
-        records = json.load(f)
+def load_records(records_file: str) -> list:
+    """
+    read expense records from `records_file` and parse into list of dicts. does some value conversions along the way
+    :param records_file:
+    :return:
+    """
+    with open(records_file, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        records: list = []
+        for row in reader:
+            row["amount"] = Decimal(row["amount"])
+            # noinspection PyTypeChecker
+            row["debtors"] = row["debtors"].split(",")
+            records.append(row)
+
     return records
 
 
@@ -110,7 +124,6 @@ def main(records_file: str) -> None:
     :param records_file:
     :return:
     """
-    info(f'loading records from {records_file}')
     records = load_records(records_file)
     balances = calculate_balances(records)
 
@@ -122,16 +135,20 @@ def main(records_file: str) -> None:
 
     print("transactions:")
     for transaction in transactions:
-        print(f'{transaction["sender"]}\ttransfers\t{transaction["amount"]}\tto\t{transaction["receiver"]}')
+        print(
+            f'{transaction["sender"]}\ttransfers\t{transaction["amount"]}\tto\t{transaction["receiver"]}'
+        )
 
     for person, transaction_amount in balance_errors:
-        print('missed balance:')
+        print("missed balance:")
         print(f"{person}: {transaction_amount}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('records_file', type=str, help="path to json file listing who paid for what")
+    parser.add_argument(
+        "records_file", type=str, help="path to json file listing who paid for what"
+    )
     args = parser.parse_args()
 
     main(args.records_file)
