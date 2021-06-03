@@ -5,7 +5,7 @@ Given a bunch of 'who paid for what' records determines final balances and gener
 
 Please see `records_example.csv` for a worked example on how to record past expenses.
 
-You should be able to use any text or spreadsheet editor to edit your csv files. csv files are expected t be in excel
+You should be able to use any text or spreadsheet editor to edit your csv files. csv files are expected to be in excel
 dialect - if you copy the example and modify it your editor should pick the right formatting automatically.
 
 Usage:
