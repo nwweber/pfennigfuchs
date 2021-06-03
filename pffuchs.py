@@ -2,6 +2,7 @@
 Figure out who owns how much to whom, and generate minimal amount of transfers between people to settle balances
 """
 
+import heapq
 import itertools
 import logging
 from decimal import Decimal
@@ -23,48 +24,46 @@ def resolve_transfers(balances: dict):
     transfers necessary to balance accounts under the constraint that people with positive balance should never have
     to transfer money to others, given that they already gave some advance to the group
     :param balances: {person: balance} dict
-    :return: missed balances, which is a {person, balance} dict indicating where someone will receive too much/too
-    little money due to currency rounding. also returns transfers, which is a list of money transfers to be made
+    :return: list of transactions to be carried out, list of remaining unbalanced debts, same for credit
     """
-    pos_bals: dict = {
-        person: balance for person, balance in balances.items() if balance > 0
-    }
-    neg_bals: dict = {
-        person: balance for person, balance in balances.items() if balance < 0
-    }
+
+    # from below here: all credits + debts recorded as negative numbers so that heapq can be used to easily retrieve
+    # largest unsettled credit and debt
+
+    # note: this heap puts smallest element first, but want largest credit to appear first. thus invert with -1
+    neg_credits = [
+        (-1 * balance, person) for person, balance in balances.items() if balance > 0
+    ]
+    heapq.heapify(neg_credits)
+
+    # debts are already negative, so largest negative debt will come first
+    neg_debts = [
+        (balance, person) for person, balance in balances.items() if balance < 0
+    ]
+    heapq.heapify(neg_debts)
+
     transactions: list = []
-    while len(pos_bals) > 0 and len(neg_bals) > 0:
-        max_debt: Decimal = Decimal("0.00")
-        max_debtor: str = ""
-        for debtor, debt in neg_bals.items():
-            if debt < max_debt:
-                max_debtor = debtor
-                max_debt = debt
-        debtor, debt = max_debtor, neg_bals.pop(max_debtor)
+    while len(neg_credits) > 0 and len(neg_debts) > 0:
+        debt, debtor = heapq.heappop(neg_debts)
+        credit, creditor = heapq.heappop(neg_credits)
 
-        max_credit: Decimal = Decimal("0.00")
-        max_creditor: str = ""
-        for creditor, credit in pos_bals.items():
-            if credit > max_credit:
-                max_creditor = creditor
-                max_credit = credit
-        creditor, credit = max_creditor, pos_bals.pop(max_creditor)
-
-        # abs because debt is negative, will always be lower otherwise
-        transaction_amount: Decimal = min(abs(debt), credit)
+        # debit and credit both negative, thus `max` picks least negative number
+        transaction_amount: Decimal = -1 * max(debt, credit)
         transactions.append(
             {"sender": debtor, "receiver": creditor, "amount": transaction_amount}
         )
-        remaining_credit = credit - transaction_amount
-        if remaining_credit > 0:
+
+        remaining_credit = credit + transaction_amount
+        if remaining_credit < 0:
             # creditor is still owed money
-            pos_bals[creditor] = remaining_credit
+            heapq.heappush(neg_credits, (remaining_credit, creditor))
+
         remaining_debt = debt + transaction_amount
         if remaining_debt < 0:
             # debtor still owes money
-            neg_bals[debtor] = remaining_debt
-    balance_errors = itertools.chain(pos_bals.items(), neg_bals.items())
-    return balance_errors, transactions
+            heapq.heappush(neg_debts, (remaining_debt, debtor))
+
+    return transactions, neg_debts, neg_credits
 
 
 def calculate_balances(records):
@@ -131,7 +130,7 @@ def main(records_file: str) -> None:
     for person, balance in balances.items():
         print(f"{person}:\t\t{balance}")
 
-    balance_errors, transactions = resolve_transfers(balances)
+    transactions, neg_debts, neg_credits = resolve_transfers(balances)
 
     print("transactions:")
     for transaction in transactions:
@@ -139,9 +138,13 @@ def main(records_file: str) -> None:
             f'{transaction["sender"]}\ttransfers\t{transaction["amount"]}\tto\t{transaction["receiver"]}'
         )
 
-    for person, transaction_amount in balance_errors:
-        print("missed balance:")
-        print(f"{person}: {transaction_amount}")
+    for amount, person in neg_debts:
+        print("missed debt due to rounding:")
+        print(f"{person}: {abs(amount)}")
+
+    for amount, person in neg_credits:
+        print("missed credit due to rounding:")
+        print(f"{person}: {abs(amount)}")
 
 
 if __name__ == "__main__":
