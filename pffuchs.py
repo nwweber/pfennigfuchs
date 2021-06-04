@@ -2,19 +2,68 @@
 Figure out who owns how much to whom, and generate minimal amount of transfers between people to settle balances
 """
 
-import heapq
-import itertools
-import logging
-from decimal import Decimal
 import argparse
 import csv
+import heapq
+import logging
+from decimal import Decimal
+from numbers import Number
+from typing import Callable, Sequence
+from typing import TypeVar
+
+T = TypeVar("T")
 
 # see here https://stackoverflow.com/a/38537983
 logging.basicConfig()
 logging.getLogger().setLevel(logging.DEBUG)
 info = logging.info
 
-RECORDS_FILENAME: str = "records_example.json"
+
+class PrioFuncHeap:
+    """
+    Heap data struct for easily accessing smallest element. Supports an optional prio_func which allows for deriving
+    priority from heap entries for added flexibility.
+
+    Based on this: https://docs.python.org/3/library/heapq.html
+
+    Motivated by wanting encapsulation in a class, heap functionality without changing underlying data and more
+    flexible sorting
+    """
+
+    data: list = None
+    # don't want implicit 'self' argument here, thus staticmethod
+    prio_func: Callable[[T], Number] = staticmethod(lambda x: x)
+
+    def __init__(
+        self, data: Sequence[T], prio_func: Callable[[T], Number] = None
+    ) -> None:
+        if prio_func is not None:
+            self.prio_func = prio_func
+        self.data = [(self.prio_func(item), item) for item in data]
+        heapq.heapify(self.data)
+
+    def push(self, item: T) -> None:
+        """
+        put item on heap based on priority calculated by prio_func(item).
+        :param item:
+        :return: None
+        """
+        heapq.heappush(self.data, (self.prio_func(item), item))
+
+    def pop(self) -> T:
+        """
+        remove lowest-priority item from heap and return it, where priority is determined by prio_func(item)
+        :return: item with lowest priority
+        """
+        prio, item = heapq.heappop(self.data)
+        return item
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __iter__(self) -> T:
+        while len(self.data) > 0:
+            yield self.pop()
 
 
 def resolve_transfers(balances: dict):
@@ -27,43 +76,43 @@ def resolve_transfers(balances: dict):
     :return: list of transactions to be carried out, list of remaining unbalanced debts, same for credit
     """
 
-    # from below here: all credits + debts recorded as negative numbers so that heapq can be used to easily retrieve
-    # largest unsettled credit and debt
-
-    # note: this heap puts smallest element first, but want largest credit to appear first. thus invert with -1
-    neg_credits = [
-        (-1 * balance, person) for person, balance in balances.items() if balance > 0
+    credit_recs = [
+        (balance, person) for person, balance in balances.items() if balance > 0
     ]
-    heapq.heapify(neg_credits)
+    # highest balance = lowest priority for this heap
+    credit_heap: PrioFuncHeap = PrioFuncHeap(credit_recs, lambda rec: -1 * rec[0])
 
-    # debts are already negative, so largest negative debt will come first
-    neg_debts = [
-        (balance, person) for person, balance in balances.items() if balance < 0
+    # make debts positive amounts, no need to track sign after splitting balances by pos/neg
+    debt_recs = [
+        (-1 * balance, person) for person, balance in balances.items() if balance < 0
     ]
-    heapq.heapify(neg_debts)
+    # highest balance = lowest priority for this heap
+    debt_heap: PrioFuncHeap = PrioFuncHeap(debt_recs, lambda rec: -1 * rec[0])
 
     transactions: list = []
-    while len(neg_credits) > 0 and len(neg_debts) > 0:
-        debt, debtor = heapq.heappop(neg_debts)
-        credit, creditor = heapq.heappop(neg_credits)
+    while len(credit_heap) > 0 and len(debt_heap) > 0:
+        debt, debtor = debt_heap.pop()
+        credit, creditor = credit_heap.pop()
 
-        # debit and credit both negative, thus `max` picks least negative number
-        transaction_amount: Decimal = -1 * max(debt, credit)
+        # don't transfer more than debtor owes/creditor is owed
+        transaction_amount: Decimal = min(debt, credit)
         transactions.append(
             {"sender": debtor, "receiver": creditor, "amount": transaction_amount}
         )
 
-        remaining_credit = credit + transaction_amount
-        if remaining_credit < 0:
+        remaining_credit = credit - transaction_amount
+        if remaining_credit > 0:
             # creditor is still owed money
-            heapq.heappush(neg_credits, (remaining_credit, creditor))
+            credit_heap.push((remaining_credit, creditor))
 
-        remaining_debt = debt + transaction_amount
-        if remaining_debt < 0:
+        remaining_debt = debt - transaction_amount
+        if remaining_debt > 0:
             # debtor still owes money
-            heapq.heappush(neg_debts, (remaining_debt, debtor))
+            debt_heap.push((remaining_debt, debtor))
 
-    return transactions, neg_debts, neg_credits
+    unbalanced_debt = list(debt_heap)
+    unbalanced_credit = list(credit_heap)
+    return transactions, unbalanced_debt, unbalanced_credit
 
 
 def calculate_balances(records):
